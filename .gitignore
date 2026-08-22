@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+
+# Build artifacts (C++ / CMake, Phase 4)
+build/
+
+# Generated media (checked in deliberately later, not incidentally)
+*.mp4
+*.gif
+!docs/media/*.mp4
+!docs/media/*.gif
+
+# macOS
+.DS_Store
