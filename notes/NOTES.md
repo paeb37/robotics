@@ -10,21 +10,21 @@ The test: **could I explain this piece to an interviewer without looking at my o
 
 ## Phase 0 — Environment
 
-*(pending)*
+Done
 
 ---
 
 ## Phase 1 — Cart-pole model + LQR balancing
 
-*(pending)*
+- Works when the initial position of pole is close to the upright position (pi)
+- However, when lower (i.e. upright - 2.0 rad) then our LQR controller applies a very high force (474 N) to the cart, to make the pole swing up
+- This causes the cart to zoom out of the frame (-> 359 m) in meshcat ...
 
-Questions to be able to answer here:
-- Why is the cart-pole underactuated, stated as a rank condition?
-- What do `Q` and `R` actually trade off, and what happened when I changed them?
-- LQR is a *local* stabilizer — how far from upright could I start before it failed, and why?
+- Specific limit: 1.3 rad (Tested)
 
-Notes:
-- 
+Lessons
+- To debug, better to print out the actual x, u values rather than visually inspect in meshcat
+
 ---
 
 ## Phase 2 — Swing-up via direct collocation

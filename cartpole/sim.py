@@ -179,14 +179,20 @@ def simulate_passive(theta0=UPRIGHT - 0.05, duration=5.0, meshcat=None):
     return simulate(theta0, duration, controller=None, meshcat=meshcat)
 
 
-def simulate_lqr(theta0=UPRIGHT - 0.05, duration=5.0, Q=DEFAULT_Q, R=DEFAULT_R,
+def simulate_lqr(theta0=UPRIGHT - 0.8, duration=5.0, Q=DEFAULT_Q, R=DEFAULT_R,
                  meshcat=None):
     """Simulate with LQR closing the loop. The pole should stay up."""
+    print(np.degrees(theta0 - UPRIGHT), "degrees from upright")
+    
     return simulate(theta0, duration, controller=make_lqr_controller(Q, R),
                     meshcat=meshcat)
 
 
 if __name__ == "__main__":
     report_linearization()
-    simulate_lqr(duration=10.0)
+
+    angle = UPRIGHT - 2.0 # testing extreme angle (farther from upright)
+    #simulate_passive(theta0=UPRIGHT - 0.05, duration=30.0)   # falls and swings forever
+    simulate_lqr(theta0=angle, duration=30.0)
+    
     input("Simulation finished. Press Enter to shut down the MeshCat server.")
