@@ -94,3 +94,9 @@ notes/           NOTES.md — running technical notes
 ## License
 
 MIT
+
+## Notebooks
+
+```python
+python3 -m pydrake.tutorials
+```

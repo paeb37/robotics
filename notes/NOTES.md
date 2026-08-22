@@ -23,6 +23,8 @@ Questions to be able to answer here:
 - What do `Q` and `R` actually trade off, and what happened when I changed them?
 - LQR is a *local* stabilizer — how far from upright could I start before it failed, and why?
 
+Notes:
+- 
 ---
 
 ## Phase 2 — Swing-up via direct collocation
