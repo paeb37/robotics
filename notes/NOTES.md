@@ -1,16 +1,12 @@
 # NOTES
 
-Running technical notes, written in my own words. The rule: before moving to the next
-phase, I write the explanation here without looking at any AI-generated explanation. If I
-can't write it fluently, I'm not ready to move on.
-
-The test: **could I explain this piece to an interviewer without looking at my own code?**
+Running technical notes, written in my own words
 
 ---
 
 ## Phase 0 — Environment
 
-Done
+Setup - done.
 
 ---
 
@@ -113,4 +109,4 @@ real-time the tail is what binds. Next step would be OSQP time_limit
 
 ## Phase 5 — Production layer
 
-*(pending)*
+Docker - done.
