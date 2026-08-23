@@ -24,6 +24,8 @@ Done
 
 Lessons
 - To debug, better to print out the actual x, u values rather than visually inspect in meshcat
+- Control period needs to be fraction of doubling period (time it takes for error to double)
+- Basin: the range of states where the robot will reach equilibrium
 
 ---
 
