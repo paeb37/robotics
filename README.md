@@ -11,7 +11,7 @@ C ABI, benchmarked against the Python one in the same control loop (results belo
 | Open-loop | With feedback |
 |:--:|:--:|
 | ![Open-loop swing-up fails](docs/media/swingup_openloop.gif) | ![Swing-up with feedback succeeds](docs/media/swingup_feedback.gif) |
-| The planned forces replayed blind. The swing-up itself is correct — then the pole is lost near the top and the cart leaves the frame. | The **identical** forces, for the first 4.3 s. Then feedback takes over and controls it. |
+| The planned forces are replayed. The swing-up itself is correct, but then the pole is lost near the top and the cart leaves the frame. | The **identical** forces, for the first 4.3 s. Then feedback takes over and controls it. |
 
 *Note: Both clips run at 4× speed and start from the same state. Error near the unstable equilibrium grows as `e^(4.65t)`, doubling every 149 ms.*
 
