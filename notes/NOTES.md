@@ -63,8 +63,8 @@ Results
 - MPC sits under the 20N limit, unlike LQR + the track length limit
 - p99 = 9.09 ms (99% of the solves took ~9ms or less)
 
-### Phase 3 latency baseline (the number to beat)
-
+Latency baseline (the number to beat)
+---
 Config: Python, OSQP, horizon N=50 (0.5 s), dt=0.01 (100 Hz),
         QP rebuilt from scratch every step, 1200 solves, M-series Mac.
 
@@ -80,6 +80,7 @@ Phase 4 target: max < 10 ms, i.e. never miss the deadline.
 Suspected win : build the QP once and update only the changing parts,
                 instead of reconstructing ~250 variables and ~350
                 constraints every step.
+---
 
 Next steps
 - To fix latency issue, need to port to C++
@@ -88,7 +89,16 @@ Next steps
 
 ## Phase 4 — C++ controller and benchmarks
 
-*(pending)*
+Phase 4 step 1 (Python - time horizon 30, dt 0.01, 800 steps):
+  naive rebuild      p50 11.89  p99 16.32  max 35.52   65% deadline misses
+  reuse + warm start p50  3.32  p99  4.17  max  7.87    0% misses
+  3.6x p50, 4.5x max. Deadline (10 ms) met.
+
+Results: program reuse 1.4x; warm start 2.6x and p99 tail 14.2 -> 4.2 ms;
+      horizon 50 -> 30 free (terminal cost = LQR cost-to-go).
+Solve cost scales ~N^2.5 -> banded structure not exploited -> C++ hypothesis.
+
+
 
 ---
 

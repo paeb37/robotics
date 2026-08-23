@@ -27,7 +27,15 @@ from cartpole.controllers import wrapped_error
 from cartpole.lqr import DEFAULT_Q, DEFAULT_R, linearize_upright, lqr_gain_and_cost_to_go
 
 CONTROL_DT = 0.01  # 100 Hz -- about 15 decisions per 149 ms doubling time
-HORIZON = 50       # steps, so 0.5 s of lookahead
+# Horizon, in steps. 30 (0.3 s) was chosen by measurement, not guess: it gives
+# control performance IDENTICAL to N=50 -- peak |u| and peak |x| match to the
+# digit across every disturbance tested -- at roughly a third of the solve cost.
+#
+# That is the terminal cost earning its keep. S is the exact LQR cost-to-go, so
+# once the horizon extends past the point where constraints stop binding, more
+# lookahead adds computation and no information. Solve cost scales about N^2.5,
+# so an over-provisioned horizon is expensive.
+HORIZON = 30
 U_MAX = 20.0       # N, matches the swing-up plan's force limit
 
 # Cart track limit. Must be physically achievable: recovering from a shove means
@@ -104,7 +112,7 @@ class LinearMPC(LeafSystem):
 
     def __init__(self, Ad, Bd, Q=DEFAULT_Q, R=DEFAULT_R, S=None, horizon=HORIZON,
                  dt=CONTROL_DT, u_max=U_MAX, x_max=X_MAX,
-                 slack_penalty=SLACK_PENALTY):
+                 slack_penalty=SLACK_PENALTY, rebuild=False, warm_start=True):
         LeafSystem.__init__(self)
         self._Ad, self._Bd = np.asarray(Ad), np.asarray(Bd)
         self._Q, self._R = np.asarray(Q), np.asarray(R)
@@ -116,8 +124,18 @@ class LinearMPC(LeafSystem):
         self._slack_penalty = float(slack_penalty)
         self._solver = OsqpSolver()
 
-        # Diagnostics for phase 4. Wall-clock per solve, and how often the QP
-        # came back infeasible.
+        # rebuild=True reconstructs the whole program every step (the naive
+        # implementation). rebuild=False builds it once and only moves the
+        # initial-state bound, which is the only thing that actually changes.
+        self._rebuild = bool(rebuild)
+        self._warm_start = bool(warm_start)
+        self._program = None
+        self._last_solution = None
+
+        # Diagnostics for phase 4. Wall-clock for the FULL per-step cost --
+        # construction (when rebuilding) plus solve -- not just the solve. Timing
+        # only the solve understates what the control loop actually has to fit
+        # inside its period.
         self.solve_times = []
         self.infeasible_count = 0
 
@@ -126,20 +144,24 @@ class LinearMPC(LeafSystem):
         self.DeclarePeriodicDiscreteUpdateEvent(dt, 0.0, self._update)
         self.DeclareStateOutputPort("actuation", state_index)
 
-    def solve_qp(self, e0):
-        """Solve for the first input. Returns None if the QP is infeasible.
+    def _build_program(self):
+        """Construct the QP once.
 
-        Rebuilt from scratch each call -- the simple implementation, and the slow
-        one. Building once and updating only the parts that change is the
-        optimisation; measuring this first makes that a result rather than a
-        guess.
+        Between control steps the ONLY thing that changes is the measured initial
+        state, which enters as the bounds of a single equality constraint. The
+        dynamics, the limits and the costs are all fixed, so reconstructing them
+        every step is pure waste -- roughly 250 variables and 350 constraints
+        rebuilt 100 times a second to express the same problem.
+
+        Returns (prog, x, u, x0_binding).
         """
         prog = MathematicalProgram()
         n_x, n_u, N = 4, 1, self._N
         x = prog.NewContinuousVariables(N + 1, n_x, "x")
         u = prog.NewContinuousVariables(N, n_u, "u")
 
-        prog.AddBoundingBoxConstraint(e0, e0, x[0])
+        # Placeholder bounds; solve_qp moves them to the measured state.
+        x0_binding = prog.AddBoundingBoxConstraint(np.zeros(n_x), np.zeros(n_x), x[0])
 
         # Track constraint is SOFT: slack variables, penalised in the cost.
         #
@@ -184,14 +206,42 @@ class LinearMPC(LeafSystem):
             prog.AddQuadraticCost(2 * self._dt * self._Q, zeros, x[k])
             prog.AddQuadraticCost(2 * self._dt * self._R, np.zeros(n_u), u[k])
         prog.AddQuadraticCost(2 * self._S, zeros, x[N])
+        return prog, x, u, x0_binding
 
+    def solve_qp(self, e0):
+        """Solve for the first input. Returns None if the QP is infeasible.
+
+        Timed end to end: construction (when rebuilding) plus solve. That is what
+        the control loop has to fit inside its 10 ms period, so it is what gets
+        measured.
+        """
         started = time.perf_counter()
+
+        if self._rebuild or self._program is None:
+            built = self._build_program()
+            if not self._rebuild:
+                self._program = built
+        else:
+            built = self._program
+        prog, _x, u, x0_binding = built
+
+        # The only per-step change: move the initial-state equality bound.
+        x0_binding.evaluator().set_bounds(e0, e0)
+
+        # Warm start from the previous solution. Consecutive QPs differ only in
+        # one bound, so the previous optimum is nearly optimal for this one, and
+        # OSQP's iteration count drops accordingly.
+        if self._warm_start and self._last_solution is not None:
+            prog.SetInitialGuessForAllVariables(self._last_solution)
+
         result = self._solver.Solve(prog)
         self.solve_times.append(time.perf_counter() - started)
 
         if not result.is_success():
             self.infeasible_count += 1
             return None
+
+        self._last_solution = result.GetSolution()
         return float(result.GetSolution(u[0])[0])
 
     def _update(self, context, discrete_state):
@@ -217,9 +267,11 @@ class LinearMPC(LeafSystem):
 
 
 def make_mpc_controller(horizon=HORIZON, dt=CONTROL_DT, u_max=U_MAX, x_max=X_MAX,
-                        Q=DEFAULT_Q, R=DEFAULT_R, slack_penalty=SLACK_PENALTY):
+                        Q=DEFAULT_Q, R=DEFAULT_R, slack_penalty=SLACK_PENALTY,
+                        rebuild=False, warm_start=True):
     """Build a LinearMPC against the upright linearisation."""
     Ad, Bd = upright_discrete_model(dt)
     _K, S = lqr_gain_and_cost_to_go(Q, R)
     return LinearMPC(Ad, Bd, Q=Q, R=R, S=S, horizon=horizon, dt=dt,
-                     u_max=u_max, x_max=x_max, slack_penalty=slack_penalty)
+                     u_max=u_max, x_max=x_max, slack_penalty=slack_penalty,
+                     rebuild=rebuild, warm_start=warm_start)
