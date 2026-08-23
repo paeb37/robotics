@@ -41,6 +41,22 @@ def make_lqr_controller(Q=DEFAULT_Q, R=DEFAULT_R):
     )
 
 
+def lqr_gain_and_cost_to_go(Q=DEFAULT_Q, R=DEFAULT_R):
+    """Return (K, S) for the linearization about upright.
+
+    K is the feedback gain, u = -K(x - x*). S is the cost-to-go matrix from the
+    Riccati equation, and V(x) = (x - x*)' S (x - x*) is a Lyapunov function for
+    the closed-loop linearized system -- it decreases along trajectories. Its
+    sublevel sets are ellipsoids approximating the region of attraction, which is
+    what the swing-up controller uses to decide when it is safe to take over.
+
+    This is the main result of the Lyapunov/region-of-attraction chapter, handed
+    to us for free: the Riccati solver computes S whether we ask for it or not.
+    """
+    linear = linearize_upright()
+    return LinearQuadraticRegulator(linear.A(), linear.B(), Q, R)
+
+
 def linearize_upright():
     """Return the LinearSystem (A, B) for the plant linearized about upright."""
     plant = make_plant()

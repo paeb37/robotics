@@ -31,12 +31,17 @@ Lessons
 
 ## Phase 2 — Swing-up via direct collocation
 
-*(pending)*
+- Collocation enables us to have both state, control as decision variables
+- Introduces constraints as well (i.e. motor cannot exert force more than 20N)
+- So direct colloc. still computes the trajectory offline (i.e. before cart moves)
 
-Questions:
-- Why collocation rather than shooting?
-- What are the decision variables and constraints in the program I wrote?
-- Why does swing-up need trajectory optimization at all instead of feedback?
+Results
+- While the direct colloc. part respected the 20N constraint, we had an issue when switching it off to LQR (near the upright equilibrium point)
+- LQR commanded 139 (which is 7 times the planned limit)
+- This motivates the reason for MPC (need to respect constraints at all times)
+
+"Act 2" - no feedback, just does the traj. initially planned. results in the cart moving far out of the plane (because discretization errors which compound)
+"Act 3" - here, we switch to LQR near the upright point so it succeeds. reacts to where the pole actually is
 
 ---
 

@@ -40,12 +40,18 @@ def build_cartpole(controller=None, meshcat=None, time_step=0.0):
 
     if controller is not None:
         # AddSystem hands back the system now owned by the builder -- that's the
-        # handle we connect to.
+        # handle we connect to. Note ownership is permanent: a System belongs to
+        # exactly one Diagram, so a controller cannot be reused across builds.
         controller = builder.AddSystem(controller)
 
-        # Close the loop. This is a cycle, and it's legal because the plant has
-        # no direct feedthrough: actuation affects state only through integration.
-        builder.Connect(plant.get_state_output_port(), controller.get_input_port(0))
+        # Feedback controllers take plant state in. An open-loop TrajectorySource
+        # has no input port at all -- it is a pure function of time -- so only
+        # wire the state connection when there is somewhere to wire it to.
+        if controller.num_input_ports() > 0:
+            # Closing the loop makes a cycle, and it's legal because the plant has
+            # no direct feedthrough: actuation affects state only via integration.
+            builder.Connect(plant.get_state_output_port(), controller.get_input_port(0))
+
         builder.Connect(controller.get_output_port(0), plant.get_actuation_input_port())
 
     if meshcat is not None:
