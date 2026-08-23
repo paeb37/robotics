@@ -12,6 +12,9 @@ dependencies = [
 dev = [
     "pytest>=8",
     "ruff>=0.6",
+    # Figures only. Deliberately a dev extra: the runtime image never plots, so
+    # it should not carry matplotlib.
+    "matplotlib>=3.8",
 ]
 
 [build-system]
