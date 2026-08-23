@@ -1,5 +1,7 @@
 # Cart-Pole Control
 
+[![CI](https://github.com/paeb37/robotics/actions/workflows/ci.yml/badge.svg)](https://github.com/paeb37/robotics/actions/workflows/ci.yml)
+
 Swing-up and constrained balancing of an underactuated cart-pole, built on
 [Drake](https://drake.mit.edu). Trajectory optimization plans the swing-up, LQR
 catches it at the top, and model-predictive control balances it while respecting
@@ -169,6 +171,37 @@ brew install cmake eigen          # or: apt install cmake libeigen3-dev
 cmake -S cpp -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
+
+## Docker
+
+Multi-stage: the C++ solver is compiled in a builder image and only its shared
+library is carried into the runtime, so the runtime ships no compiler, no Eigen
+and no OSQP sources. The build ends in a smoke test that solves a QP through
+both backends and compares them — a broken image fails the build rather than
+shipping.
+
+```bash
+docker build -t cartpole-control .
+docker run --rm cartpole-control                    # latency benchmark
+docker run --rm cartpole-control python scripts/compare_lqr_mpc.py
+```
+
+~500 MB, almost entirely pydrake. Ubuntu 24.04 because that is a Drake-supported
+platform; note Drake also needs `libx11-6 libsm6 libglib2.0-0t64` at runtime even
+headless, or `import pydrake` fails.
+
+## Tests
+
+```bash
+pytest                # 38 tests, ~2.5 s
+pytest -m slow        # also re-solves the trajectory optimisation (minutes)
+```
+
+The swing-up trajectory is committed as a fixture rather than re-solved. Several
+tests encode bugs that actually happened — MPC matching LQR when unconstrained
+(which would have caught a `dt` scaling error), and QP feasibility with the cart
+outside the track (which would have caught hard state constraints). Both were
+verified by reintroducing the bugs and confirming the suite fails.
 
 ## Running
 

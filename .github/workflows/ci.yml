@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: lint + python tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ubuntu 24.04 + Python 3.12 is a Drake-supported configuration.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check cartpole/ scripts/ tests/
+
+      - name: Test
+        # Slow tests (re-solving the trajectory optimisation) are deselected by
+        # the addopts in pyproject.toml.
+        run: pytest
+
+  cpp:
+    name: c++ build + backend agreement
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Build the solver
+        run: |
+          cmake -S cpp -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Check the exported ABI surface
+        # OSQP is statically linked here, and pydrake ships its own copy inside
+        # libdrake.so. If our symbols leaked, a process loading both could
+        # resolve OSQP calls to whichever landed first. Hidden visibility should
+        # make that structurally impossible; this asserts it stays that way.
+        #
+        # Only the cartpole_mpc_* and osqp counts are checked. GNU shared objects
+        # also export _init/_fini as type T, so a total-symbol count would be
+        # brittle for reasons unrelated to what is being tested.
+        run: |
+          echo "exported text symbols:"
+          nm -D --defined-only build/libcartpole_mpc.so | grep ' T ' | awk '{print $3}'
+          ours=$(nm -D --defined-only build/libcartpole_mpc.so | grep -c ' T cartpole_mpc_' || true)
+          leaked=$(nm -D --defined-only build/libcartpole_mpc.so | grep -ci ' T .*osqp' || true)
+          echo "cartpole_mpc_* exported: $ours (want 5)"
+          echo "osqp symbols exported:   $leaked (want 0)"
+          test "$ours" -eq 5
+          test "$leaked" -eq 0
+
+      - name: Backends must agree
+        run: pytest tests/test_backends.py -v
+
+  docker:
+    name: docker image builds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

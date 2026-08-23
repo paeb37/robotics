@@ -1,0 +1,5 @@
+_cartpole_mpc_create
+_cartpole_mpc_solve
+_cartpole_mpc_last_iterations
+_cartpole_mpc_last_status
+_cartpole_mpc_destroy

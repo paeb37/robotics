@@ -17,6 +17,11 @@ endif()
 # OSQP symbols to whichever copy loaded first. Hidden visibility makes the two
 # copies invisible to each other.
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+# C too, and this one matters: OSQP is a C library. Setting only the C++ preset
+# left OSQP's objects compiled with default visibility, and linking the static
+# library re-exported 123 of its symbols through this shared object -- exactly
+# the collision hazard the hidden visibility was meant to remove.
+set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
 # No version constraint. Eigen's config uses same-major-version matching, so
@@ -60,6 +65,16 @@ target_link_libraries(cartpole_mpc
 )
 
 target_compile_options(cartpole_mpc PRIVATE -Wall -Wextra -O3)
+
+# Belt and braces at the link step. Compiler visibility depends on every
+# dependency honouring the preset; this enforces the export list regardless.
+if(APPLE)
+  target_link_options(cartpole_mpc PRIVATE
+    "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exported_symbols.txt")
+else()
+  # Hide everything pulled in from static archives (i.e. OSQP).
+  target_link_options(cartpole_mpc PRIVATE "LINKER:--exclude-libs,ALL")
+endif()
 
 # Keep the artifact next to the build tree; cpp_backend.py looks for it there.
 set_target_properties(cartpole_mpc PROPERTIES
