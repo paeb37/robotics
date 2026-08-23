@@ -47,12 +47,42 @@ Results
 
 ## Phase 3 — Constrained MPC vs. LQR
 
-*(pending)*
+Weaknesses of phase 2 / why we need MPC
+- The first 4.3 seconds of the simulation are "open-loop" - no feedback based on the updated state
+- If we have a different model (i.e. cart), starting angle/pos, then it will fail to solve
 
-Questions:
-- Why MPC here rather than LQR, in one sentence?
-- What exactly does LQR do when it hits the force limit, and why can't it anticipate it?
-- Discrete-time stability is `|λ| < 1`, not `Re(λ) < 0`. Where did that bite me?
+- MPC factors in constraints (i.e. motor force) into the QP equation
+- Re-plans with each timestep
+- So we use MPC just to replace the LQR towards the top. The initial part of the swinging is still open loop (to fix we need TVLQR or nonlinear MPC along the entire traj. Out of scope)
+
+
+Results
+- Slow, because it is solving a QP every timestep (not just matrix multiply, like LQR is)
+- Needed a soft constraint on state (since robot state can be affected by things outside our control) but hard constraint on control (motor) still
+- Confirmed unconstrained MPC (with terminal Riccati cost) reproduced LQR first
+- MPC sits under the 20N limit, unlike LQR + the track length limit
+- p99 = 9.09 ms (99% of the solves took ~9ms or less)
+
+### Phase 3 latency baseline (the number to beat)
+
+Config: Python, OSQP, horizon N=50 (0.5 s), dt=0.01 (100 Hz),
+        QP rebuilt from scratch every step, 1200 solves, M-series Mac.
+
+    p50   3.03 ms
+    p99   9.09 ms     <- 1 miss/sec at 100 Hz
+    max  14.60 ms     <- 46% over the 10 ms control period
+
+Deadline      : 10 ms   (control period at 100 Hz)
+Stability slack: 149 ms  (doubling time -- why missing a deadline
+                          degrades performance rather than losing the pole)
+
+Phase 4 target: max < 10 ms, i.e. never miss the deadline.
+Suspected win : build the QP once and update only the changing parts,
+                instead of reconstructing ~250 variables and ~350
+                constraints every step.
+
+Next steps
+- To fix latency issue, need to port to C++
 
 ---
 

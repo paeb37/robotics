@@ -29,6 +29,31 @@ def wrapped_error(x, x_star=UPRIGHT_STATE):
     return e
 
 
+class StateFeedback(LeafSystem):
+    """u = -K(x - x*), optionally clipped to +/- u_limit.
+
+    Exists so LQR can be compared against MPC on equal terms, with and without
+    saturation. Clipping is worth calling out: LQR's stability guarantee comes
+    from a Riccati equation that assumes u is unbounded, so the moment the output
+    is clipped that guarantee is void. It may still work -- but nothing says it
+    has to, and that is precisely the gap MPC closes by planning within the limit
+    instead of truncating afterwards.
+    """
+
+    def __init__(self, K, u_limit=None):
+        LeafSystem.__init__(self)
+        self._K = np.asarray(K).reshape(4)
+        self._u_limit = u_limit
+        self.DeclareVectorInputPort("state", 4)
+        self.DeclareVectorOutputPort("actuation", 1, self._calc_actuation)
+
+    def _calc_actuation(self, context, output):
+        u = float(-self._K @ wrapped_error(self.get_input_port(0).Eval(context)))
+        if self._u_limit is not None:
+            u = float(np.clip(u, -self._u_limit, self._u_limit))
+        output.SetFromVector([u])
+
+
 class SwingUpAndBalance(LeafSystem):
     """Replay a planned swing-up, then hand off to LQR inside the basin.
 
