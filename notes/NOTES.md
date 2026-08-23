@@ -89,16 +89,25 @@ Next steps
 
 ## Phase 4 — C++ controller and benchmarks
 
-Phase 4 step 1 (Python - time horizon 30, dt 0.01, 800 steps):
-  naive rebuild      p50 11.89  p99 16.32  max 35.52   65% deadline misses
-  reuse + warm start p50  3.32  p99  4.17  max  7.87    0% misses
-  3.6x p50, 4.5x max. Deadline (10 ms) met.
+Context (why C++)
+OSQP is being asked to do this: at N=30: ~180 variables, ~250 constraints, banded structure, warm-started so it converges in a handful of iterations
 
-Results: program reuse 1.4x; warm start 2.6x and p99 tail 14.2 -> 4.2 ms;
-      horizon 50 -> 30 free (terminal cost = LQR cost-to-go).
-Solve cost scales ~N^2.5 -> banded structure not exploited -> C++ hypothesis.
+It is taking 3.32 ms. So somewhere between 90% and 99% of that time is not OSQP solving — it's Drake traversing the program, marshalling bindings into solver format, and crossing the Python/C++ boundary on every call.
+
+A direct implementation that builds the sparse CSC matrices once and calls osqp_update_bounds + osqp_solve skips all of it. I'd expect 10× or more speedup
 
 
+Phase 4: C++ MPC backend (Eigen + OSQP v1.0, ctypes, ~180 LOC C++)
+  median  8-12x faster (0.176 ms flat vs 1.5-2.2 ms)
+  p99     better at low disturbance, comparable at high
+  max     WORSE: two spikes >10 ms at active-set transitions
+  correctness: closed-loop trajectories match to 1.9e-15 in the
+               unconstrained regime; diverge where the objective is
+               flat in u[0] under active slack
+
+Not an unqualified win: better typical case, worse tail. For hard
+real-time the tail is what binds. Next step would be OSQP time_limit
++ fallback for predictable degradation, but out of scope for now
 
 ---
 

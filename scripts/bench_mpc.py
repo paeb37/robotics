@@ -1,86 +1,103 @@
-"""Phase 4 step 1: does building the QP once instead of every step fix the deadline?
+"""Phase 4: MPC solve latency, Python vs C++.
 
     python scripts/bench_mpc.py
 
-Three implementations of the SAME controller, measured over the same closed-loop
-run so the state sequence is identical:
+Measures the FULL per-step cost -- QP construction plus solve -- because that is
+what has to fit inside the 10 ms control period. An earlier version timed only
+the solve and flattered the naive implementation by about 6x.
 
-    rebuild            reconstruct the whole program every step (the baseline)
-    reuse              build once, move the initial-state bound
-    reuse + warm start build once, and seed OSQP with the previous solution
+The first WARMUP solves are discarded. They are dominated by one-off costs (cold
+caches, first allocations, lazy initialisation) and including them put the
+reported max at index 0 for nearly every configuration -- measuring startup, not
+steady-state control.
 
-Timing covers the FULL per-step cost -- construction plus solve -- because that
-is what has to fit inside the 10 ms control period. An earlier version timed only
-the solve and therefore flattered the baseline.
-
-The deadline is 10 ms (100 Hz). Missing it does not lose the pole -- the 149 ms
-doubling time gives plenty of slack -- but a controller that cannot hold its own
-advertised rate is not a controller you would ship.
+The deadline is 10 ms (100 Hz). Missing it does not lose the pole: the 149 ms
+doubling time leaves plenty of slack, so a missed deadline degrades performance
+rather than causing failure. But a controller that cannot hold its advertised
+rate is not one you would ship.
 """
 
 import numpy as np
 from pydrake.systems.analysis import Simulator
 
+from cartpole.cpp_backend import available as cpp_available
+from cartpole.cpp_backend import unavailable_reason
 from cartpole.model import UPRIGHT, read_state, set_state
 from cartpole.mpc import CONTROL_DT, make_mpc_controller
 from cartpole.sim import build_cartpole
 
 DEADLINE_MS = CONTROL_DT * 1e3
-KICK = 0.3       # inside what 20 N can handle, so every variant recovers
-DURATION = 8.0
+WARMUP = 20
+DURATION = 10.0
+SAMPLES = 501
+# (kick rad/s, track limit m). The track has to be wide enough that recovery is
+# physically possible -- see compare_lqr_mpc.py.
+CASES = [(0.3, 2.0), (0.6, 2.0), (0.8, 3.0), (1.0, 4.0)]
 
 
-def measure(label, **kwargs):
-    mpc = make_mpc_controller(**kwargs)
+def run(kick, x_max, **kwargs):
+    """One closed-loop run. Returns (trajectory, per-step times in ms)."""
+    mpc = make_mpc_controller(x_max=x_max, **kwargs)
     diagram, plant = build_cartpole(controller=mpc, meshcat=None)
     context = diagram.CreateDefaultContext()
     plant_context = plant.GetMyContextFromRoot(context)
-    set_state(plant, plant_context, theta=UPRIGHT, thetadot=KICK)
+    set_state(plant, plant_context, theta=UPRIGHT, thetadot=kick)
 
     simulator = Simulator(diagram, context)
     simulator.Initialize()
-    simulator.AdvanceTo(DURATION)
+    trajectory = []
+    for t in np.linspace(0.0, DURATION, SAMPLES):
+        simulator.AdvanceTo(t)
+        trajectory.append(read_state(plant, plant_context).copy())
 
-    _x, theta, _xd, _td = read_state(plant, plant_context)
-    recovered = abs((theta - UPRIGHT + np.pi) % (2 * np.pi) - np.pi) < 0.02
-
-    times_ms = np.array(mpc.solve_times) * 1e3
-    misses = int(np.sum(times_ms > DEADLINE_MS))
-    return {
-        "label": label,
-        "n": len(times_ms),
-        "p50": np.percentile(times_ms, 50),
-        "p99": np.percentile(times_ms, 99),
-        "max": times_ms.max(),
-        "misses": misses,
-        "miss_pct": 100.0 * misses / len(times_ms),
-        "recovered": recovered,
-    }
+    return np.array(trajectory), np.array(mpc.solve_times)[WARMUP:] * 1e3
 
 
 def main():
-    print(f"deadline {DEADLINE_MS:.0f} ms/step ({1/CONTROL_DT:.0f} Hz), "
-          f"kick {KICK} rad/s, {DURATION} s per run\n")
+    configs = [("python", {"backend": "python"})]
+    if cpp_available():
+        configs.append(("c++", {"backend": "cpp"}))
+    else:
+        print(f"C++ backend unavailable:\n{unavailable_reason()}\n")
 
-    rows = [
-        measure("rebuild every step", rebuild=True, warm_start=False),
-        measure("build once, reuse", rebuild=False, warm_start=False),
-        measure("reuse + warm start", rebuild=False, warm_start=True),
-    ]
-
-    header = f"{'implementation':<22} {'p50':>8} {'p99':>8} {'max':>8} {'misses':>14}  ok"
+    print(f"deadline {DEADLINE_MS:.0f} ms/step ({1 / CONTROL_DT:.0f} Hz), "
+          f"{DURATION} s per run, first {WARMUP} solves discarded\n")
+    header = (f"{'kick':>5} {'x_max':>6} {'backend':<8} {'p50':>8} {'p99':>8} "
+              f"{'max':>8} {'misses':>7} {'traj err':>10}")
     print(header)
     print("-" * len(header))
-    for r in rows:
-        print(f"{r['label']:<22} {r['p50']:7.2f}ms {r['p99']:7.2f}ms {r['max']:7.2f}ms "
-              f"{r['misses']:5d}/{r['n']:<4d} {r['miss_pct']:4.1f}%  "
-              f"{'yes' if r['recovered'] else 'NO'}")
 
-    base, best = rows[0], rows[-1]
-    print(f"\nspeedup p50: {base['p50'] / best['p50']:.1f}x   "
-          f"max: {base['max'] / best['max']:.1f}x")
-    print("deadline met" if best["max"] < DEADLINE_MS
-          else f"still missing: max {best['max']:.2f}ms > {DEADLINE_MS:.0f}ms")
+    speedups = []
+    for kick, x_max in CASES:
+        reference = None
+        for name, kwargs in configs:
+            trajectory, times = run(kick, x_max, **kwargs)
+            if reference is None:
+                reference, error = trajectory, 0.0
+                baseline_p50 = np.percentile(times, 50)
+            else:
+                error = np.max(np.abs(trajectory - reference))
+                speedups.append(baseline_p50 / np.percentile(times, 50))
+            print(f"{kick:5.1f} {x_max:6.1f} {name:<8} "
+                  f"{np.percentile(times, 50):7.3f}m {np.percentile(times, 99):7.3f}m "
+                  f"{times.max():7.3f}m {int((times > DEADLINE_MS).sum()):3d}/{len(times):<4d} "
+                  f"{error:10.2e}")
+        print()
+
+    if speedups:
+        print(f"median-case speedup: {min(speedups):.1f}x - {max(speedups):.1f}x")
+    print(
+        "Notes:\n"
+        "  traj err  -- max |state difference| vs the Python run over the whole\n"
+        "               closed loop. Machine precision in the unconstrained\n"
+        "               regime; larger once the track constraint binds, where the\n"
+        "               objective is nearly flat in u[0] and two solvers can land\n"
+        "               on different near-optimal points.\n"
+        "  misses    -- solves exceeding the control period. The C++ backend wins\n"
+        "               decisively on the median but shows occasional spikes at\n"
+        "               active-set transitions, which is the number that matters\n"
+        "               for hard real-time."
+    )
 
 
 if __name__ == "__main__":

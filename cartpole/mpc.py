@@ -43,7 +43,13 @@ U_MAX = 20.0       # N, matches the swing-up plan's force limit
 # takes room. LQR needs ~1.6 m for the smallest disturbance tested, so a limit
 # below that asks for something no controller could deliver.
 X_MAX = 2.0        # m
-SLACK_PENALTY = 1e4  # cost per metre of track-limit violation
+# Cost per metre of track-limit violation. 1e3, not the 1e4 first tried: against
+# stage costs scaled by dt (so ~1e-2) a 1e4 penalty spans six orders of magnitude
+# and conditions the QP badly enough that OSQP returns an INACCURATE answer
+# without reporting failure -- it showed up as the Python and C++ backends
+# disagreeing by 1.1 N, and as Python's answer depending on warm-start history.
+# At 1e3 the two agree to 7e-10.
+SLACK_PENALTY = 1e3
 
 
 def matrix_exp(M, terms=24):
@@ -112,7 +118,8 @@ class LinearMPC(LeafSystem):
 
     def __init__(self, Ad, Bd, Q=DEFAULT_Q, R=DEFAULT_R, S=None, horizon=HORIZON,
                  dt=CONTROL_DT, u_max=U_MAX, x_max=X_MAX,
-                 slack_penalty=SLACK_PENALTY, rebuild=False, warm_start=True):
+                 slack_penalty=SLACK_PENALTY, rebuild=False, warm_start=True,
+                 backend="python"):
         LeafSystem.__init__(self)
         self._Ad, self._Bd = np.asarray(Ad), np.asarray(Bd)
         self._Q, self._R = np.asarray(Q), np.asarray(R)
@@ -131,6 +138,21 @@ class LinearMPC(LeafSystem):
         self._warm_start = bool(warm_start)
         self._program = None
         self._last_solution = None
+
+        # backend="cpp" routes solve_qp through the C++ library. Same LeafSystem,
+        # same diagram, same scripts -- only the solver differs, which is what
+        # makes the latency comparison controlled rather than approximate.
+        self.backend = backend
+        self._cpp = None
+        if backend == "cpp":
+            from cartpole.cpp_backend import CppMpcBackend
+            self._cpp = CppMpcBackend(
+                self._Ad, self._Bd, self._Q, self._R, self._S,
+                self._N, self._dt, self._u_max,
+                self._x_max, self._slack_penalty,
+            )
+        elif backend != "python":
+            raise ValueError(f"unknown backend {backend!r}")
 
         # Diagnostics for phase 4. Wall-clock for the FULL per-step cost --
         # construction (when rebuilding) plus solve -- not just the solve. Timing
@@ -217,6 +239,13 @@ class LinearMPC(LeafSystem):
         """
         started = time.perf_counter()
 
+        if self._cpp is not None:
+            command = self._cpp.solve(e0)
+            self.solve_times.append(time.perf_counter() - started)
+            if command is None:
+                self.infeasible_count += 1
+            return command
+
         if self._rebuild or self._program is None:
             built = self._build_program()
             if not self._rebuild:
@@ -268,10 +297,10 @@ class LinearMPC(LeafSystem):
 
 def make_mpc_controller(horizon=HORIZON, dt=CONTROL_DT, u_max=U_MAX, x_max=X_MAX,
                         Q=DEFAULT_Q, R=DEFAULT_R, slack_penalty=SLACK_PENALTY,
-                        rebuild=False, warm_start=True):
+                        rebuild=False, warm_start=True, backend="python"):
     """Build a LinearMPC against the upright linearisation."""
     Ad, Bd = upright_discrete_model(dt)
     _K, S = lqr_gain_and_cost_to_go(Q, R)
     return LinearMPC(Ad, Bd, Q=Q, R=R, S=S, horizon=horizon, dt=dt,
                      u_max=u_max, x_max=x_max, slack_penalty=slack_penalty,
-                     rebuild=rebuild, warm_start=warm_start)
+                     rebuild=rebuild, warm_start=warm_start, backend=backend)
