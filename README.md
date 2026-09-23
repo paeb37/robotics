@@ -11,7 +11,7 @@ C ABI, benchmarked against the Python one in the same control loop (results belo
 | Open-loop | With feedback |
 |:--:|:--:|
 | ![Open-loop swing-up fails](docs/media/swingup_openloop.gif) | ![Swing-up with feedback succeeds](docs/media/swingup_feedback.gif) |
-| The planned forces are replayed. The swing-up itself is correct, but then the pole is lost near the top and the cart leaves the frame. | The **identical** forces, for the first 4.3 s. Then feedback takes over and controls it. |
+| The planned forces are replayed. The swing-up itself is correct, but then the pole is lost near the top and the cart leaves the frame. | The **identical** forces, for the first 4.3 s. Then feedback takes over - 20 N can't hold it on the first try, so the plan does one more swing and feedback catches it at 5.3 s. |
 
 *Note: Both clips run at 4× speed and start from the same state. Error near the unstable equilibrium grows as `e^(4.65t)`, doubling every 149 ms.*
 
@@ -31,7 +31,7 @@ control rate, the MPC horizon, and the acceptable solve time.
 ## What it does
 
 **1. Swing-up by direct collocation.** From hanging at rest to upright at rest,
-subject to constraint `|u| ≤ 20 N`. The solver is handed the force limit and produces an 11.78 s trajectory with **eight pumping swings** — it discovers pumping on its own because at 20 N it cannot simply lift the pole.
+subject to constraint `|u| ≤ 20 N`. The solver is handed the force limit and produces an 11.78 s trajectory with **six pumping swings** — it discovers pumping on its own because at 20 N it cannot simply lift the pole.
 
 **2. Open-loop execution fails.** Replaying the planned forces (computed offline)
 without feedback loses the pole every time, as shown. The reason is because the error near the upright pos grows as `e^(4.65t)`, so surviving six seconds of it
@@ -78,18 +78,18 @@ MPC does, however, guarantee constraints:
 
 Same `LeafSystem`, same diagram, same closed loop - only the QP solver differs,
 so the comparison is fair. Full per-step cost (construction + solve),
-first 20 solves discarded as warmup:
+first 20 solves discarded as warmup. Run on an M5 Mac:
 
 | disturbance | backend | p50 | p99 | max | over 10 ms |
 |---|---|---|---|---|---|
-| 0.3 rad/s | python | 2.160 ms | 2.963 ms | 3.627 ms | 0 / 980 |
-| 0.3 rad/s | **c++** | **0.176 ms** | 0.696 ms | 1.636 ms | 0 / 980 |
-| 1.0 rad/s | python | 1.492 ms | 2.717 ms | 3.523 ms | 0 / 980 |
-| 1.0 rad/s | **c++** | **0.178 ms** | 1.626 ms | 12.634 ms | 1 / 980 |
+| 0.3 rad/s | python | 1.599 ms | 2.186 ms | 2.674 ms | 0 / 980 |
+| 0.3 rad/s | **c++** | **0.127 ms** | 0.497 ms | 1.165 ms | 0 / 980 |
+| 1.0 rad/s | python | 1.107 ms | 2.032 ms | 2.712 ms | 0 / 980 |
+| 1.0 rad/s | **c++** | **0.129 ms** | 1.215 ms | 9.365 ms | 0 / 980 |
 
-**8–12× on the median** - 0.176 ms at every disturbance level.
+**8–12× on the median** - ~0.13 ms at every disturbance level.
 
-**But the C++ extreme case is actually worse.** Two solves exceed the 10 ms control period at higher disturbances, which Python never does. Those are ADMM iteration bursts at active-set transitions.
+**But the C++ extreme case is actually worse.** At 1.0 rad/s its slowest step is 9.4 ms, just under the 10 ms control period, while Python's is 2.7 ms. On my older M2 Mac that same step took 12.6 ms and missed the deadline. Those are ADMM iteration bursts at active-set transitions.
 
 ## How it works
 
@@ -189,9 +189,9 @@ scripts pause between acts; pass `--headless` for numbers only.
 ## Next steps / what I would do differently
 
 **Fix the latency tail before the median.** The C++ backend is 8–12× faster
-typically but occasionally blows the deadline
+typically but its worst case comes within half a millisecond of the deadline
 
-**Stabilize the swing-up trajectory.** The first 4.3 s are open-loop with no
+**Stabilize the swing-up trajectory.** Most of the first 5.3 s are open-loop with no
 disturbance rejection at all. TVLQR along the trajectory would help close that gap
 
 **Model error.** Everything here plans and executes against the same model. Changing the plant's masses relative to the controller's model would be an interesting next experiment
